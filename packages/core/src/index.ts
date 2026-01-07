@@ -34,3 +34,11 @@ export { SQLiteProfileOptimizationRepository } from './storage/repositories/prof
 export { SQLiteJobMatchingRepository } from './storage/repositories/job-matching';
 export { SQLiteLlmCacheRepository } from './storage/repositories/llm-cache';
 export { SQLiteRankItemRepository, SQLiteRankPairRepository, SQLiteRankRunRepository } from './storage/repositories/ranker';
+
+export { SQLiteBenchmarkProfileRepository } from './storage/repositories/benchmark-profile';
+export { SQLiteBenchmarkSectionRepository } from './storage/repositories/benchmark-section';
+export { SQLiteBenchmarkEmbeddingRepository } from './storage/repositories/benchmark-embedding';
+export { SQLiteBenchmarkCacheRepository } from './storage/repositories/benchmark-cache';
+
+export { BenchmarkService, BenchmarkSearchOptions, BenchmarkPattern, DataDrivenPlan } from './services/benchmark';
+export { GitHubBenchmarkIngestionService, GitHubBenchmarkCandidate, GitHubBenchmarkProfile, GitHubBenchmarkSection } from './services/github-benchmark';

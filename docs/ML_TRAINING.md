@@ -1,15 +1,25 @@
 # Ranker Model Training Guide
 
-This document describes how to train and deploy a trainable neural network ranker for profile optimization.
+This document describes how to train and deploy a trainable neural network ranker for profile optimization using real data and embeddings.
 
 ## Overview
 
 The ranker is a pairwise ranking model that learns to prefer better profile content based on:
-- **Embeddings**: Text embeddings from OpenRouter API
-- **Metrics**: Quantitative metrics (clarity, impact, relevance, etc.)
+- **Real Embeddings**: Text embeddings from @xenova/transformers (all-MiniLM-L6-v2, 384D)
+- **Metrics**: Quantitative metrics (clarity, impact, relevance, readability, keyword_density, completeness)
 - **Training Signals**: User preferences, benchmark comparisons, before/after changes
 
 ## Prerequisites
+
+### Node.js Dependencies
+
+```bash
+# Install workspace dependencies
+pnpm install
+
+# Install optional ONNX runtime for Node.js inference
+npm install onnxruntime-node
+```
 
 ### Python Environment
 
@@ -31,77 +41,85 @@ Required packages:
 - `numpy` - Numerical operations
 - `onnx` - ONNX model format
 - `onnxruntime` - ONNX inference
+- `scikit-learn` - For dataset utilities
 - `tqdm` - Progress bars
 
-## Quick Start
+## Quick Start (End-to-End Pipeline)
 
-### Step 1: Bootstrap Initial Training Data
-
-```bash
-# Bootstrap 200 pairs from GitHub benchmarks
-pnpm cli ranker:bootstrap --platform github --n-pairs 200
-
-# Or LinkedIn
-pnpm cli ranker:bootstrap --platform linkedin --n-pairs 200
-```
-
-This creates initial training pairs using heuristic quality signals from benchmark profiles.
-
-### Step 2: Export Dataset
+Run these commands in sequence to build a production-grade ranker from scratch:
 
 ```bash
-# Export to data/ranker directory
-pnpm cli ranker:export --out data/ranker
-```
+# Step 1: Seed elite GitHub profiles
+pnpm cli benchmarks:seed:github --n 50
 
-This creates:
-- `data/ranker/dataset.jsonl` - Training pairs in JSONL format
-- `data/ranker/metadata.json` - Dataset metadata with feature names
+# Step 2: Ingest profile content (bio, README, repo READMEs)
+pnpm cli benchmarks:ingest:github --limit 50
 
-### Step 3: Train Model
+# Step 3: Generate real embeddings using @xenova/transformers
+pnpm cli benchmarks:embed --platform github
 
-```bash
-# Train the ranker model
+# Step 4: Create rank items and bootstrap training pairs
+pnpm cli ranker:bootstrap --platform github --n-pairs 500 --diversity 0.3
+
+# Step 5: Export dataset to JSONL
+pnpm cli ranker:export --platform github --out data/ranker
+
+# Step 6: Validate dataset
+pnpm cli ranker:validate --dataset data/ranker/dataset.jsonl --metadata data/ranker/metadata.json
+
+# Step 7: Train neural network model
 pnpm cli ranker:train --epochs 50 --batch-size 32
-```
 
-This:
-1. Reads the exported dataset
-2. Trains a neural network with margin ranking loss
-3. Exports to ONNX format
-4. Activates the model for inference
-
-### Step 4: Verify Status
-
-```bash
-# Check if ranker is active
+# Step 8: Check model status
 pnpm cli ranker:status
 
-# Run smoke test
+# Step 9: Run smoke test
 pnpm cli ranker:smoke
 ```
 
 ## Manual Workflow
 
-### Dataset Export
+### Benchmark Management
 
 ```bash
-# Export specific platform
-pnpm cli ranker:export --platform github --out data/ranker/github
+# Seed GitHub profiles from elite sources
+pnpm cli benchmarks:seed:github --n 100
 
-# Export with statistics only
-pnpm cli ranker:export --stats
+# Ingest profile content
+pnpm cli benchmarks:ingest:github --limit 50
+
+# Generate embeddings for all sections
+pnpm cli benchmarks:embed --platform github
+
+# View benchmark stats
+pnpm cli benchmarks:stats
 ```
 
-### Manual Training (Python)
+### Ranker Data Pipeline
 
 ```bash
+# Create rank items from benchmarks and generate training pairs
+pnpm cli ranker:bootstrap --platform github --n-pairs 500 --diversity 0.3
+
+# Export dataset for training
+pnpm cli ranker:export --platform github --out data/ranker
+
+# Validate dataset consistency
+pnpm cli ranker:validate --dataset data/ranker/dataset.jsonl --metadata data/ranker/metadata.json
+```
+
+### Model Training
+
+```bash
+# Train with default settings (50 epochs, batch size 32)
+pnpm cli ranker:train
+
+# Custom training settings
+pnpm cli ranker:train --epochs 100 --batch-size 64
+
+# Manual training (Python)
 cd tools/ml
-
-# Activate venv
 source venv/bin/activate
-
-# Run training script directly
 python train_ranker.py \
   --input ../../data/ranker/dataset.jsonl \
   --output ../../models \
@@ -109,42 +127,34 @@ python train_ranker.py \
   --batch-size 32
 ```
 
-### Model Files
-
-Training produces:
-- `models/ranker.onnx` - The neural network model
-- `models/ranker_metadata.json` - Model metadata (dims, features, metrics)
-- `models/active_model.json` - Pointer to active model
-
-## Adding Training Signals
-
-### Manual Labeling
+### Model Management
 
 ```bash
-# Get item IDs from database, then label a pair
+# Check if ranker is active
+pnpm cli ranker:status
+
+# Test model inference
+pnpm cli ranker:smoke
+
+# Manually label a pair
 pnpm cli ranker:label --a <item_id_a> --b <item_id_b> --better a --tags clarity,impact
 ```
 
-### Capturing User Choices
+## Model Files
 
-When users choose between A/B variants, pairs are automatically captured with:
-- `source: user_choice`
-- Reason tags from the comparison
-
-### Before/After Tracking
-
-When content is optimized and applied:
-- Pairs are created with `source: before_after`
-- Labels indicate improvement direction
+Training produces:
+- `models/ranker.onnx` - The neural network model (MLP)
+- `models/ranker_metadata.json` - Model metadata (dims, features, metrics)
+- `models/active_model.json` - Pointer to active model
 
 ## Architecture
 
 ### Neural Network
 
 ```
-Input: [embedding (1536D) + metrics (6D)] = 1542D
+Input: [embedding (384D) + metrics (6D)] = 390D
   ↓
-Shared MLP: Linear(1542→128) → ReLU → Dropout → Linear(128→64) → ReLU
+Shared MLP: Linear(390→128) → ReLU → Dropout → Linear(128→64) → ReLU
   ↓
 Score Head: Linear(64→1)
   ↓
@@ -160,12 +170,15 @@ L = max(0, margin - label * (score_A - score_B))
 
 Where `label = 1` if A > B, `-1` if B > A.
 
-### Inference
+### Feature Names
 
-The model can be used for:
-1. **Item Scoring**: Score a single profile section
-2. **Comparison**: Compare two items and return preference
-3. **Ranking**: Rank multiple items by score
+The model uses these 6 features in a fixed order:
+1. `clarity` - How clear and concise the content is
+2. `impact` - Evidence of impact and results
+3. `relevance` - Technical relevance and keywords
+4. `readability` - Sentence structure and word choice
+5. `keyword_density` - Keyword optimization
+6. `completeness` - Content depth and structure
 
 ## Fallback Behavior
 
@@ -209,8 +222,7 @@ pnpm cli ranker:bootstrap --platform github --n-pairs 500
 # Check model files
 ls -la models/
 
-# Manually activate
-# Edit models/active_model.json with correct filenames
+# Manually activate (edit models/active_model.json)
 ```
 
 ### ONNX Runtime Missing
@@ -224,23 +236,36 @@ pnpm cli ranker:smoke
 # Should show "provenance: heuristic"
 ```
 
+### Embedding Generation Fails
+
+```bash
+# Check if @xenova/transformers is installed
+npm list @xenova/transformers
+
+# Reinstall
+npm install @xenova/transformers
+```
+
 ## API Reference
 
 ### CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `pnpm cli ranker:status` | Show model status and dataset stats |
-| `pnpm cli ranker:smoke` | Test model inference |
-| `pnpm cli ranker:export` | Export dataset to JSONL |
-| `pnpm cli ranker:bootstrap` | Create initial training pairs |
-| `pnpm cli ranker:train` | Train and activate model |
-| `pnpm cli ranker:label` | Manually label a pair |
+| `pnpm cli benchmarks:seed:github --n 50` | Seed 50 elite GitHub profiles |
+| `pnpm cli benchmarks:ingest:github` | Fetch profile content |
+| `pnpm cli benchmarks:embed --platform github` | Generate embeddings |
+| `pnpm cli ranker:bootstrap --n-pairs 500` | Create training pairs |
+| `pnpm cli ranker:export --out data/ranker` | Export dataset |
+| `pnpm cli ranker:validate` | Validate dataset |
+| `pnpm cli ranker:train --epochs 50` | Train model |
+| `pnpm cli ranker:status` | Show model status |
+| `pnpm cli ranker:smoke` | Test inference |
 
 ### Node.js API
 
 ```typescript
-import { RankerInferenceService } from '@ancso/ml';
+import { RankerInferenceService, FeatureExtractor } from '@ancso/ml';
 
 const ranker = new RankerInferenceService();
 await ranker.initialize();
@@ -248,27 +273,31 @@ await ranker.initialize();
 // Score an item
 const { score, provenance } = await ranker.scoreItem({
   id: '1',
-  platform: 'linkedin',
-  section: 'headline',
+  platform: 'github',
+  section: 'readme',
   sourceRef: 'Experienced software engineer',
   score: 0,
   metrics: { clarity: 0.8, impact: 0.7, relevance: 0.9 }
 });
 
-// Compare two items
-const result = await ranker.compare(itemA, itemB);
+// Compare two items with real embeddings
+const result = await ranker.compareWithEmbeddings(
+  itemA, embeddingA,
+  itemB, embeddingB
+);
 // result: { aScore, bScore, preference, confidence, provenance }
 ```
 
 ## Performance
 
-- **Training**: ~1-5 minutes on CPU for 50 epochs with 200 pairs
-- **Inference**: <10ms per item on CPU
+- **Embedding Generation**: ~10-50ms per section (local CPU)
+- **Training**: ~2-10 minutes on CPU for 50 epochs with 500 pairs
+- **Inference**: <5ms per item on CPU
 - **Memory**: Model uses ~200KB
 
 ## Next Steps
 
 1. **Collect More Data**: Add more pairs from user interactions
 2. **Fine-tune**: Adjust hyperparameters in `train_ranker.py`
-3. **Embeddings**: Connect to actual embedding storage for real embeddings
+3. **Cross-platform**: Train on LinkedIn data for multi-platform ranking
 4. **Evaluation**: Add A/B testing to measure real-world improvement

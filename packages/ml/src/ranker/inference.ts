@@ -244,6 +244,82 @@ export class RankerInferenceService {
     };
   }
 
+  async scoreItemWithEmbedding(item: ScoredItem, embedding: number[]): Promise<{ score: number; provenance: string }> {
+    if (this.isActive() && this.session && this.config) {
+      return this.scoreWithRankerWithEmbedding(item, embedding);
+    }
+    return this.scoreWithHeuristics(item);
+  }
+
+  private async scoreWithRankerWithEmbedding(item: ScoredItem, embedding: number[]): Promise<{ score: number; provenance: string }> {
+    try {
+      const metrics = this.extractMetricsVector(item.metrics, this.config!.featureNames);
+
+      const inputTensor = this.createInputTensorWithEmbedding(embedding, metrics);
+      
+      const feeds = { input: inputTensor };
+      const outputs = await this.session.run(feeds);
+      const score = outputs.output?.data?.[0] || 0;
+
+      return { score, provenance: 'ranker' };
+    } catch (error) {
+      this.logger.error(`Ranker scoring failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return this.scoreWithHeuristics(item);
+    }
+  }
+
+  private createInputTensorWithEmbedding(embedding: number[], metrics: number[]): any {
+    const onnx = this.runtime;
+    const inputData = new Float32Array(embedding.length + metrics.length);
+    
+    for (let i = 0; i < embedding.length; i++) {
+      inputData[i] = embedding[i];
+    }
+    for (let i = 0; i < metrics.length; i++) {
+      inputData[embedding.length + i] = metrics[i];
+    }
+
+    return new onnx.Tensor('float32', inputData, [1, inputData.length]);
+  }
+
+  async compareWithEmbeddings(
+    itemA: ScoredItem, 
+    embeddingA: number[],
+    itemB: ScoredItem, 
+    embeddingB: number[]
+  ): Promise<ComparisonResult> {
+    if (this.isActive() && this.session && this.config) {
+      return this.compareWithRankerAndEmbeddings(itemA, embeddingA, itemB, embeddingB);
+    }
+    return this.compareWithHeuristics(itemA, itemB);
+  }
+
+  private async compareWithRankerAndEmbeddings(
+    itemA: ScoredItem,
+    embeddingA: number[],
+    itemB: ScoredItem,
+    embeddingB: number[]
+  ): Promise<ComparisonResult> {
+    try {
+      const scoreA = await this.scoreWithRankerWithEmbedding(itemA, embeddingA);
+      const scoreB = await this.scoreWithRankerWithEmbedding(itemB, embeddingB);
+
+      const preference = Math.sign(scoreA.score - scoreB.score);
+      const confidence = Math.abs(scoreA.score - scoreB.score);
+
+      return {
+        aScore: scoreA.score,
+        bScore: scoreB.score,
+        preference,
+        confidence: Math.min(1, confidence),
+        provenance: 'ranker',
+      };
+    } catch (error) {
+      this.logger.error(`Ranker comparison failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return this.compareWithHeuristics(itemA, itemB);
+    }
+  }
+
   private createInputTensor(embedding: number[], metrics: number[]): any {
     const onnx = this.runtime;
     const inputData = new Float32Array(embedding.length + metrics.length);

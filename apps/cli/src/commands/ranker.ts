@@ -128,112 +128,11 @@ function rankerCommands(): Command {
       }
     }));
 
-  command.addCommand(new Command('export')
-    .description('Export ranker dataset to JSONL format')
-    .option('-o, --out <path>', 'Output directory', 'data/ranker')
-    .option('--platform <platform>', 'Filter by platform (linkedin, github, resume)')
-    .action(async (options) => {
-      try {
-        console.log(chalk.blue('Exporting Ranker Dataset'));
-        console.log('============================\n');
-
-        const itemRepo = new SQLiteRankItemRepository();
-        const pairRepo = new SQLiteRankPairRepository();
-
-        let items: any[] = [];
-        let pairs: any[] = [];
-
-        if (options.platform) {
-          items = await itemRepo.findByPlatform(options.platform);
-          const allPairs = await pairRepo.listAll();
-          pairs = allPairs.filter(p => items.some(i => i.id === p.aItemId || i.id === p.bItemId));
-        } else {
-          items = await itemRepo.listAll(10000);
-          pairs = await pairRepo.listAll(10000);
-        }
-
-        if (pairs.length === 0) {
-          console.log(chalk.yellow('⚠️  No pairs found. Create pairs first using ranker:add-pair or ranker:bootstrap.'));
-          process.exit(1);
-        }
-
-        const outputDir = path.resolve(options.out);
-        if (!fs.existsSync(outputDir)) {
-          fs.mkdirSync(outputDir, { recursive: true });
-        }
-
-        const datasetPath = path.join(outputDir, 'dataset.jsonl');
-        const metadataPath = path.join(outputDir, 'metadata.json');
-
-        const featureNames = ['clarity', 'impact', 'relevance', 'readability', 'keyword_density', 'completeness'];
-
-        let skipped = 0;
-        let exported = 0;
-
-        const writeStream = fs.createWriteStream(datasetPath);
-
-        for (const pair of pairs) {
-          const itemA = items.find(i => i.id === pair.aItemId);
-          const itemB = items.find(i => i.id === pair.bItemId);
-
-          if (!itemA || !itemB) {
-            skipped++;
-            continue;
-          }
-
-          const row = {
-            a_metrics: this.extractMetrics(itemA, featureNames),
-            b_metrics: this.extractMetrics(itemB, featureNames),
-            a_embedding_id: itemA.embeddingId || null,
-            b_embedding_id: itemB.embeddingId || null,
-            label: pair.label,
-            reason_tags: pair.reasonTags || [],
-            source: pair.source,
-          };
-
-          writeStream.write(JSON.stringify(row) + '\n');
-          exported++;
-        }
-
-        writeStream.end();
-
-        const datasetHash = crypto.createHash('sha256').update(JSON.stringify(pairs.map(p => ({ aItemId: p.aItemId, bItemId: p.bItemId, label: p.label })))).digest('hex');
-
-        const metadata = {
-          version: '1.0',
-          featureNames,
-          embeddingDim: 1536,
-          metricsDim: featureNames.length,
-          itemCount: items.length,
-          pairCount: exported,
-          skippedPairs: skipped,
-          datasetHash,
-          createdAt: new Date().toISOString(),
-          labelDistribution: await pairRepo.getLabelDistribution(),
-        };
-
-        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-
-        console.log(chalk.green('✅ Dataset exported!'));
-        console.log(`\n📁 Output Files:`);
-        console.log(`  Dataset: ${datasetPath}`);
-        console.log(`  Metadata: ${metadataPath}`);
-        console.log(`\n📊 Statistics:`);
-        console.log(`  Items: ${items.length}`);
-        console.log(`  Pairs Exported: ${exported}`);
-        console.log(`  Skipped: ${skipped}`);
-        console.log(`  Dataset Hash: ${datasetHash.substring(0, 16)}...`);
-
-      } catch (error) {
-        console.error(chalk.red('Export failed:'), error instanceof Error ? error.message : 'Unknown error');
-        process.exit(1);
-      }
-    }));
-
   command.addCommand(new Command('bootstrap')
-    .description('Bootstrap initial training pairs from benchmark data')
+    .description('Create initial training pairs from benchmark data')
     .option('--platform <platform>', 'Platform to bootstrap (linkedin, github)', 'github')
-    .option('--n-pairs <n>', 'Number of pairs to generate', '200')
+    .option('--n-pairs <n>', 'Number of pairs to generate', '500')
+    .option('--diversity <n>', 'Diversity factor (0-1)', '0.3')
     .action(async (options) => {
       try {
         console.log(chalk.blue('Bootstrapping Ranker Training Data'));
@@ -245,76 +144,99 @@ function rankerCommands(): Command {
           process.exit(1);
         }
 
-        const itemRepo = new SQLiteRankItemRepository();
-        const pairRepo = new SQLiteRankPairRepository();
+        const { RankerDataPipelineService } = await import('@ancso/ml');
+        const pipeline = new RankerDataPipelineService();
 
-        const existingCount = await itemRepo.count(options.platform);
-        if (existingCount < nPairs * 2) {
-          console.log(chalk.yellow(`⚠️  Not enough items for ${nPairs} pairs. Please ingest benchmarks first.`));
-          console.log(`   Current items: ${existingCount}, needed: ${nPairs * 2}`);
-          process.exit(1);
-        }
+        console.log(chalk.yellow('🔧 Creating rank items from benchmarks...'));
+        const itemsCreated = await pipeline.createRankItemsFromBenchmarks(options.platform as 'github' | 'linkedin');
+        console.log(`  Created ${itemsCreated} rank items`);
 
-        const items = await itemRepo.findByPlatform(options.platform);
-        const pairsToCreate: any[] = [];
-
-        for (let i = 0; i < nPairs && i + 1 < items.length; i++) {
-          const idx = i % items.length;
-          const nextIdx = (idx + 1) % items.length;
-
-          if (items[idx].id === items[nextIdx].id) continue;
-
-          const itemA = items[idx];
-          const itemB = items[nextIdx];
-
-          const scoreA = this.computeQualityScore(itemA);
-          const scoreB = this.computeQualityScore(itemB);
-
-          if (scoreA === scoreB) continue;
-
-          const betterItem = scoreA > scoreB ? itemA : itemB;
-          const worseItem = scoreA > scoreB ? itemB : itemA;
-
-          pairsToCreate.push({
-            aItemId: betterItem.id,
-            bItemId: worseItem.id,
-            label: 1,
-            reasonTags: ['quality_comparison', `${options.platform}_signal`],
-            source: 'benchmark' as const,
-          });
-        }
-
-        if (pairsToCreate.length === 0) {
-          console.log(chalk.yellow('⚠️  Could not generate any quality-based pairs'));
-          process.exit(1);
-        }
-
-        const spinner = ora(`Creating ${pairsToCreate.length} pairs...`).start();
-        
-        let created = 0;
-        for (const pairData of pairsToCreate) {
-          try {
-            await pairRepo.create({
-              id: randomUUID(),
-              ...pairData,
-              createdAt: new Date().toISOString(),
-            });
-            created++;
-          } catch (e) {
-          }
-        }
-
-        spinner.succeed(`Created ${created} pairs`);
+        console.log(chalk.yellow('\n🎲 Generating training pairs...'));
+        const pairsCreated = await pipeline.bootstrapPairs(
+          options.platform as 'github' | 'linkedin',
+          nPairs,
+          parseFloat(options.diversity)
+        );
 
         console.log(chalk.green('\n✅ Bootstrap complete!'));
-        console.log(`  Pairs created: ${created}`);
+        console.log(`  Pairs created: ${pairsCreated}`);
         console.log(`  Platform: ${options.platform}`);
-
-        const labelDist = await pairRepo.getLabelDistribution();
-        console.log(`  Label distribution: A>B=${labelDist['1'] || 0}, B>A=${labelDist['-1'] || 0}`);
+        console.log(`  Diversity factor: ${options.diversity}`);
+        console.log('\nNext steps:');
+        console.log('1. Run: pnpm cli ranker:export --out data/ranker');
+        console.log('2. Run: pnpm cli ranker:train --epochs 50');
 
       } catch (error) {
         console.error(chalk.red('Bootstrap failed:'), error instanceof Error ? error.message : 'Unknown error');
+        process.exit(1);
+      }
+    }));
+
+  command.addCommand(new Command('export')
+    .description('Export ranker dataset to JSONL format')
+    .option('--platform <platform>', 'Platform to export (linkedin, github)', 'github')
+    .option('--out <path>', 'Output directory', 'data/ranker')
+    .action(async (options) => {
+      try {
+        console.log(chalk.blue('Exporting Ranker Dataset'));
+        console.log('============================\n');
+
+        const { RankerDataPipelineService } = await import('@ancso/ml');
+        const pipeline = new RankerDataPipelineService();
+
+        const result = await pipeline.exportDataset(
+          options.platform as 'github' | 'linkedin',
+          options.out
+        );
+
+        console.log(chalk.green('✅ Dataset exported!'));
+        console.log(`\n📁 Output Files:`);
+        console.log(`  Dataset: ${result.datasetPath}`);
+        console.log(`  Metadata: ${result.metadataPath}`);
+        console.log(`\n📊 Statistics:`);
+        console.log(`  Items: ${result.itemCount}`);
+        console.log(`  Pairs Exported: ${result.pairCount}`);
+        console.log(`  Skipped: ${result.skippedPairs}`);
+        console.log(`  Dataset Hash: ${result.datasetHash.substring(0, 16)}...`);
+        console.log(`\n💡 Next step: pnpm cli ranker:train --epochs 50`);
+
+      } catch (error) {
+        console.error(chalk.red('Export failed:'), error instanceof Error ? error.message : 'Unknown error');
+        process.exit(1);
+      }
+    }));
+
+  command.addCommand(new Command('validate')
+    .description('Validate ranker dataset')
+    .option('--dataset <path>', 'Dataset file path', 'data/ranker/dataset.jsonl')
+    .option('--metadata <path>', 'Metadata file path', 'data/ranker/metadata.json')
+    .action(async (options) => {
+      try {
+        console.log(chalk.blue('Validating Ranker Dataset'));
+        console.log('=============================\n');
+
+        const { RankerDataPipelineService } = await import('@ancso/ml');
+        const pipeline = new RankerDataPipelineService();
+
+        const result = await pipeline.validateDataset(options.dataset, options.metadata);
+
+        console.log(`Dataset Valid: ${result.valid ? chalk.green('YES') : chalk.red('NO')}`);
+        console.log('\n📊 Stats:');
+        Object.entries(result.stats).forEach(([key, value]) => {
+          console.log(`  ${key}: ${value}`);
+        });
+
+        if (result.issues.length > 0) {
+          console.log(chalk.red('\n⚠️  Issues found:'));
+          result.issues.forEach(issue => console.log(`  - ${issue}`));
+        } else {
+          console.log(chalk.green('\n✅ No issues found!'));
+        }
+
+        process.exit(result.valid ? 0 : 1);
+
+      } catch (error) {
+        console.error(chalk.red('Validation failed:'), error instanceof Error ? error.message : 'Unknown error');
         process.exit(1);
       }
     }));

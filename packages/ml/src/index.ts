@@ -1,8 +1,12 @@
 export { EmbeddingProvider, EmbeddingInput, EmbeddingOutput, EmbeddingError } from './embeddings/provider';
 export { OpenRouterEmbeddingProvider } from './embeddings/openrouter';
 export { StubEmbeddingProvider } from './embeddings/stub';
+export { XenovaEmbeddingProvider, CachedXenovaEmbeddingProvider } from './embeddings/xenova';
 export { CosineSimilarity } from './similarity/cosine';
 export { EmbeddingRepository, EmbeddingRecord } from './storage/embeddings-repo';
 export { EmbeddingService } from './services/embedding-service';
+export { BenchmarkEmbeddingService, BenchmarkEmbeddingResult } from './services/benchmark-embedding-service';
+export { FeatureExtractor, FEATURE_NAMES, FeatureName, FeatureVector, FeatureExtractionResult } from './features/extractor';
 export { RankerDatasetService, RankItem, RankPair, DatasetExportRow } from './ranker/dataset';
+export { RankerDataPipelineService, RankerItem, RankerPair, DatasetMetadata, ExportResult } from './ranker/pipeline';
 export { RankerInferenceService, RankerConfigService, RankerMetadata, RankerConfig, ScoredItem, ComparisonResult } from './ranker/inference';

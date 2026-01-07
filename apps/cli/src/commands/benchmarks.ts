@@ -10,8 +10,9 @@ import {
   SQLiteBenchmarkSectionRepository,
   SQLiteBenchmarkEmbeddingRepository,
   SQLiteBenchmarkCacheRepository,
+  GitHubBenchmarkIngestionService,
 } from '@ancso/core';
-import { EmbeddingService } from '@ancso/core';
+import { BenchmarkEmbeddingService } from '@ancso/ml';
 import { LinkedInAutomation } from '@ancso/automation';
 import ora from 'ora';
 
@@ -141,60 +142,25 @@ function benchmarksCommands(): Command {
     .action(async (options) => {
       try {
         console.log(chalk.blue('Seeding GitHub Benchmark Library'));
-        console.log('==================================\n'));
+        console.log('==================================\n');
 
-        const profileRepo = new SQLiteBenchmarkProfileRepository();
-        const cacheRepo = new SQLiteBenchmarkCacheRepository();
+        const ingestionService = new GitHubBenchmarkIngestionService();
+        await ingestionService.initialize();
 
-        console.log(chalk.yellow('🔍 Collecting profiles from GitHub sources...'));
-        console.log('(GitStar, Top-GitHub-Users, Committers.top)\n');
+        console.log(chalk.yellow('🔍 Collecting elite GitHub profiles...'));
+        console.log('(GitHub Stars, Top Contributors, Open Source Maintainers)\n');
 
-        const candidates = await this.collectGithubCandidates(cacheRepo);
+        const candidates = await ingestionService.seedProfiles(parseInt(options.n));
 
-        console.log(`Found ${candidates.length} candidate profiles`);
-
-        const scored = candidates.map(c => ({
-          ...c,
-          combinedScore: this.calculateGithubScore(c),
-        }));
-
-        scored.sort((a, b) => b.combinedScore - a.combinedScore);
-
-        const selected = scored.slice(0, parseInt(options.n));
-        let added = 0;
-
-        for (const profile of selected) {
-          const existing = await profileRepo.findById(profile.id);
-          if (existing) {
-            console.log(chalk.gray(`⏭️  Already exists: ${profile.username}`));
-            continue;
-          }
-
-          await profileRepo.create({
-            id: profile.id,
-            platform: 'github',
-            externalId: profile.id,
-            username: profile.username,
-            displayName: profile.displayName,
-            bio: profile.bio,
-            persona: profile.persona as any,
-            sourceUrl: `https://github.com/${profile.username}`,
-            relevanceScore: profile.relevanceScore,
-            isElite: true,
-            isIngested: false,
-            metadata: { combinedScore: profile.combinedScore, sources: profile.sources },
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-
-          console.log(`✅ ${profile.username} (score: ${profile.combinedScore.toFixed(2)})`);
-          added++;
-        }
-
-        console.log(chalk.green(`\n🎉 Added ${added} elite GitHub profiles`));
+        console.log(`\n🎉 Added ${candidates.length} elite GitHub profiles`);
         console.log('\nNext steps:');
         console.log('1. Run: pnpm cli benchmarks:ingest:github');
-        console.log('2. Run: pnpm cli benchmarks:embed');
+        console.log('2. Run: pnpm cli benchmarks:embed --platform github');
+
+        console.log('\n💡 Top candidates by relevance:');
+        candidates.slice(0, 5).forEach((c, i) => {
+          console.log(`  ${i + 1}. ${c.username} (score: ${c.relevanceScore.toFixed(2)}, sources: ${c.sources.join(', ')})`);
+        });
 
       } catch (error) {
         console.error(chalk.red('Failed to seed GitHub profiles:'), error instanceof Error ? error.message : 'Unknown error');
@@ -204,35 +170,31 @@ function benchmarksCommands(): Command {
 
   command.addCommand(new Command('ingest:github')
     .description('Fetch GitHub profile metadata and content')
-    .action(async () => {
+    .option('--limit <number>', 'Number of profiles to ingest', '10')
+    .action(async (options) => {
       try {
         console.log(chalk.blue('Ingesting GitHub Profiles'));
         console.log('==============================\n');
 
-        const profileRepo = new SQLiteBenchmarkProfileRepository();
-        const sectionRepo = new SQLiteBenchmarkSectionRepository();
-        const cacheRepo = new SQLiteBenchmarkCacheRepository();
+        const ingestionService = new GitHubBenchmarkIngestionService();
+        await ingestionService.initialize();
 
-        const profiles = await profileRepo.findNotIngested('github', 10);
+        console.log(chalk.yellow('🔍 Fetching profile data and content...\n'));
 
-        if (profiles.length === 0) {
-          console.log(chalk.yellow('No profiles to ingest. Run benchmarks:seed:github first.'));
-          return;
-        }
+        const result = await ingestionService.ingestAllPending(parseInt(options.limit));
 
-        console.log(`Found ${profiles.length} profiles to ingest\n`);
+        console.log(chalk.green(`\n🎉 Ingestion complete!`));
+        console.log(`  Success: ${result.success}`);
+        console.log(`  Failed: ${result.failed}`);
+        console.log('\nNext steps:');
+        console.log('1. Run: pnpm cli benchmarks:embed --platform github');
+        console.log('2. Run: pnpm cli ranker:bootstrap --platform github --n-pairs 200');
 
-        for (const profile of profiles) {
-          const spinner = ora(`Ingesting ${profile.username}...`).start();
-
-          try {
-            await this.ingestGithubProfile(profile, sectionRepo, cacheRepo);
-            await profileRepo.markAsIngested(profile.id);
-            spinner.succeed(`${profile.username}`);
-          } catch (error) {
-            spinner.fail(`${profile.username}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
-        }
+      } catch (error) {
+        console.error(chalk.red('Failed to ingest GitHub profiles:'), error instanceof Error ? error.message : 'Unknown error');
+        process.exit(1);
+      }
+    }));
 
         console.log(chalk.green('\n🎉 GitHub profile ingestion complete'));
 
@@ -339,63 +301,51 @@ function benchmarksCommands(): Command {
     }));
 
   command.addCommand(new Command('embed')
-    .description('Generate embeddings for all benchmark sections')
-    .action(async () => {
+    .description('Generate embeddings for benchmark sections using @xenova/transformers')
+    .option('--platform <platform>', 'Platform to embed (github|linkedin|all)', 'all')
+    .action(async (options) => {
       try {
         console.log(chalk.blue('Generating Embeddings for Benchmarks'));
         console.log('==========================================\n');
 
-        const embeddingService = new EmbeddingService();
-        const profileRepo = new SQLiteBenchmarkProfileRepository();
-        const sectionRepo = new SQLiteBenchmarkSectionRepository();
-        const embeddingRepo = new SQLiteBenchmarkEmbeddingRepository();
+        const { BenchmarkEmbeddingService } = await import('@ancso/ml');
+        const embeddingService = new BenchmarkEmbeddingService();
 
-        const linkedinProfiles = await profileRepo.findByPlatform('linkedin');
-        const githubProfiles = await profileRepo.findByPlatform('github');
-        const allProfiles = [...linkedinProfiles, ...githubProfiles];
+        console.log(chalk.yellow('🔧 Initializing embedding model...'));
+        await embeddingService.initialize();
 
-        let embedded = 0;
-        let skipped = 0;
+        const modelInfo = embeddingService.getModelInfo();
+        console.log(`  Model: ${modelInfo.model}`);
+        console.log(`  Dimensions: ${modelInfo.dimensions}\n`);
 
-        for (const profile of allProfiles) {
-          const sections = await sectionRepo.findByProfileId(profile.id);
+        let result: { embedded: number; skipped: number; failed: number };
 
-          for (const section of sections) {
-            if (section.embeddingId) {
-              skipped++;
-              continue;
-            }
+        if (options.platform === 'all') {
+          console.log('Embedding GitHub sections...');
+          const githubResult = await embeddingService.embedPlatformSections('github');
+          console.log(`  Embedded: ${githubResult.embedded}, Skipped: ${githubResult.skipped}, Failed: ${githubResult.failed}`);
 
-            const spinner = ora(`Embedding ${profile.username}/${section.sectionType}...`).start();
+          console.log('\nEmbedding LinkedIn sections...');
+          const linkedinResult = await embeddingService.embedPlatformSections('linkedin');
+          console.log(`  Embedded: ${linkedinResult.embedded}, Skipped: ${linkedinResult.skipped}, Failed: ${linkedinResult.failed}`);
 
-            try {
-              const embedding = await embeddingService.generateEmbedding(section.content);
-
-              const embeddingId = uuidv4();
-              await embeddingRepo.create({
-                id: embeddingId,
-                profileId: profile.id,
-                sectionId: section.id,
-                embeddingModel: 'text-embedding-3-small',
-                embeddingVector: Buffer.from(new Float32Array(embedding)),
-                dimension: embedding.length,
-                createdAt: new Date().toISOString(),
-              });
-
-              await sectionRepo.update({
-                ...section,
-                embeddingId,
-              });
-
-              embedded++;
-              spinner.succeed(`${profile.username}/${section.sectionType}`);
-            } catch (error) {
-              spinner.fail(`${profile.username}/${section.sectionType}`);
-            }
-          }
+          result = {
+            embedded: githubResult.embedded + linkedinResult.embedded,
+            skipped: githubResult.skipped + linkedinResult.skipped,
+            failed: githubResult.failed + linkedinResult.failed,
+          };
+        } else {
+          result = await embeddingService.embedPlatformSections(options.platform as 'github' | 'linkedin');
         }
 
-        console.log(chalk.green(`\n🎉 Embedded ${embedded} sections (${skipped} already had embeddings)`));
+        console.log(chalk.green(`\n🎉 Embedding complete!`));
+        console.log(`  Total Embedded: ${result.embedded}`);
+        console.log(`  Total Skipped: ${result.skipped} (already had embeddings)`);
+        console.log(`  Total Failed: ${result.failed}`);
+        console.log('\nNext steps:');
+        console.log('1. Run: pnpm cli ranker:bootstrap --platform github --n-pairs 200');
+        console.log('2. Run: pnpm cli ranker:export --out data/ranker');
+        console.log('3. Run: pnpm cli ranker:train --epochs 50');
 
       } catch (error) {
         console.error(chalk.red('Failed to generate embeddings:'), error instanceof Error ? error.message : 'Unknown error');
@@ -504,179 +454,3 @@ function benchmarksCommands(): Command {
 }
 
 export { benchmarksCommands };
-
-// Helper functions
-function extractLinkedInUsername(url: string): string | null {
-  const match = url.match(/linkedin\.com\/in\/([^/]+)/);
-  return match ? match[1] : null;
-}
-
-async function findExistingProfile(repo: any, platform: string, username: string): Promise<any> {
-  const profiles = await repo.findByPlatform(platform);
-  return profiles.find((p: any) => p.username === username);
-}
-
-async function collectGithubCandidates(cacheRepo: SQLiteBenchmarkCacheRepository): Promise<any[]> {
-  const candidates: any[] = [];
-
-  const hardcodedElite = [
-    { username: 'torvalds', displayName: 'Linus Torvalds', bio: 'Creator of Linux and Git' },
-    { username: 'gaearon', displayName: 'Dan Abramov', bio: 'React core team' },
-    { username: 'addyosmani', displayName: 'Addy Osmani', bio: 'Chrome engineering' },
-    { username: 'kentcdodds', displayName: 'Kent C. Dodds', bio: 'Testing expert' },
-    { username: 'sindresorhus', displayName: 'Sindre Sorhus', bio: 'Open source maintainer' },
-    { username: 'jlord', displayName: 'Jessica Lord', bio: 'GitHub engineer' },
-    { username: 'bkeepers', displayName: 'Brandon Keepers', bio: 'GitHub architect' },
-    { username: 'defunkt', displayName: 'Chris Wanstrath', bio: 'GitHub CEO' },
-    { username: 'mojombo', displayName: 'Tom Preston-Werner', bio: 'GitHub co-founder' },
-    { username: 'pjhyett', displayName: 'PJ Hyett', bio: 'GitHub co-founder' },
-  ];
-
-  for (const dev of hardcodedElite) {
-    candidates.push({
-      id: uuidv4(),
-      username: dev.username,
-      displayName: dev.displayName,
-      bio: dev.bio,
-      relevanceScore: 0.95,
-      persona: 'engineer',
-      sources: ['hardcoded'],
-    });
-  }
-
-  return candidates;
-}
-
-function calculateGithubScore(profile: any): number {
-  let score = profile.relevanceScore || 0.5;
-
-  if (profile.sources?.includes('hardcoded')) score += 0.3;
-  if (profile.bio?.length > 50) score += 0.1;
-
-  return Math.min(score, 1.0);
-}
-
-async function ingestGithubProfile(profile: any, sectionRepo: any, cacheRepo: any): Promise<void> {
-  const cacheKey = `github_user_${profile.username}`;
-  const cached = await cacheRepo.get(cacheKey);
-
-  if (cached) {
-    if (cached.readme) {
-      await sectionRepo.create({
-        id: uuidv4(),
-        profileId: profile.id,
-        sectionType: 'readme',
-        sectionName: 'profile_readme',
-        content: cached.readme,
-        wordCount: cached.readme.split(/\s+/).length,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    return;
-  }
-
-  if (profile.bio) {
-    await sectionRepo.create({
-      id: uuidv4(),
-      profileId: profile.id,
-      sectionType: 'summary',
-      sectionName: 'bio',
-      content: profile.bio,
-      wordCount: profile.bio.split(/\s+/).length,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  await cacheRepo.set(cacheKey, 'github_user', {
-    username: profile.username,
-    bio: profile.bio,
-    readme: null,
-  }, 86400);
-}
-
-async function ingestLinkedinProfile(
-  profile: any, 
-  sectionRepo: any, 
-  automation: any,
-  cacheRepo?: any
-): Promise<void> {
-  const cacheKey = `linkedin_profile_${profile.username}`;
-  
-  if (cacheRepo) {
-    const cached = await cacheRepo.get(cacheKey);
-    if (cached) {
-      console.log(`   [cache] Using cached data for ${profile.username}`);
-      if (cached.headline) {
-        await sectionRepo.create({
-          id: uuidv4(),
-          profileId: profile.id,
-          sectionType: 'headline',
-          content: cached.headline,
-          wordCount: cached.headline.split(/\s+/).length,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      if (cached.about) {
-        await sectionRepo.create({
-          id: uuidv4(),
-          profileId: profile.id,
-          sectionType: 'about',
-          content: cached.about,
-          wordCount: cached.about.split(/\s+/).length,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      if (cached.experience) {
-        await sectionRepo.create({
-          id: uuidv4(),
-          profileId: profile.id,
-          sectionType: 'experience',
-          sectionName: 'experience_summary',
-          content: cached.experience,
-          wordCount: cached.experience.split(/\s+/).length,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      return;
-    }
-  }
-
-  const data = await automation.getProfileData();
-
-  if (data.headline) {
-    await sectionRepo.create({
-      id: uuidv4(),
-      profileId: profile.id,
-      sectionType: 'headline',
-      content: data.headline,
-      wordCount: data.headline.split(/\s+/).length,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  if (data.about) {
-    await sectionRepo.create({
-      id: uuidv4(),
-      profileId: profile.id,
-      sectionType: 'about',
-      content: data.about,
-      wordCount: data.about.split(/\s+/).length,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  if (cacheRepo) {
-    await cacheRepo.set(cacheKey, 'linkedin_profile', {
-      headline: data.headline || null,
-      about: data.about || null,
-      experience: null,
-    }, 86400);
-  }
-}

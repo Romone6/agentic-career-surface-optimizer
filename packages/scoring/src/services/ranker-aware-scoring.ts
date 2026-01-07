@@ -1,4 +1,4 @@
-import { ScoringInput, ProfileScoreReport, SectionScore, ProvenanceInfo } from '../schemas';
+import { ProfileScoreReport, ProvenanceInfo } from '../schemas';
 import { OverallScoringAlgorithm } from '../rubrics/overall';
 import { TruthfulnessValidator } from '../validators/truthfulness';
 import { Logger } from '@ancso/core';
@@ -31,63 +31,47 @@ export class RankerAwareScoringService {
     }
   }
 
-  async generateProfileScoreReport(input: ScoringInput): Promise<ProfileScoreReport> {
+  async generateProfileScoreReport(
+    userId: string,
+    factStore: any,
+    platform: string = 'combined',
+    targetPersona: string = 'both'
+  ): Promise<ProfileScoreReport & { provenance: ProvenanceInfo }> {
     try {
-      this.logger.info(`Generating ranker-aware score report for user: ${input.userId}`);
+      this.logger.info(`Generating ranker-aware score report for user: ${userId}`);
 
-      const baseReport = await OverallScoringAlgorithm.generateScoreReport(input);
+      const input = {
+        userId,
+        factStore,
+        platform: platform as 'linkedin' | 'github' | 'resume' | 'combined',
+        targetPersona: targetPersona as 'recruiter' | 'investor' | 'both',
+      };
 
-      if (!this.useRanker || !this.rankerService) {
-        return {
-          ...baseReport,
-          provenance: {
-            rankerActive: false,
-            scoringMethod: 'heuristic',
-            modelVersion: undefined,
-          }
-        };
-      }
+      const scoreReport = await OverallScoringAlgorithm.generateScoreReport(input);
 
       const provenance: ProvenanceInfo = {
-        rankerActive: true,
-        scoringMethod: 'ranker',
-        modelVersion: (await this.rankerService.getModelInfo())?.version,
+        rankerActive: this.useRanker,
+        scoringMethod: this.useRanker ? 'ranker' : 'heuristic',
+        modelVersion: this.useRanker ? (await this.rankerService?.getModelInfo())?.version : undefined,
         rankedAt: new Date().toISOString(),
       };
 
-      const rankedSections = await Promise.all(
-        input.sections.map(async (section) => {
-          const scoredItem: ScoredItem = {
-            id: section.id || `section_${section.type}`,
-            platform: input.platform,
-            section: section.type,
-            sourceRef: section.content.substring(0, 100),
-            score: section.score,
-            metrics: this.extractSectionMetrics(section),
-          };
-
-          const rankerResult = await this.rankerService.scoreItem(scoredItem);
-
-          return {
-            ...section,
-            rankerScore: rankerResult.score,
-            provenance: {
-              ...provenance,
-              confidence: rankerResult.score,
-            },
-          } as SectionScore & { rankerScore?: number; provenance: ProvenanceInfo };
-        })
-      );
-
       return {
-        ...baseReport,
-        sections: rankedSections,
+        ...scoreReport,
         provenance,
-      };
+      } as ProfileScoreReport & { provenance: ProvenanceInfo };
     } catch (error) {
       this.logger.error(`Ranker-aware scoring failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       
+      const input = {
+        userId,
+        factStore,
+        platform: platform as 'linkedin' | 'github' | 'resume' | 'combined',
+        targetPersona: targetPersona as 'recruiter' | 'investor' | 'both',
+      };
+      
       const baseReport = await OverallScoringAlgorithm.generateScoreReport(input);
+      
       return {
         ...baseReport,
         provenance: {
@@ -95,8 +79,36 @@ export class RankerAwareScoringService {
           scoringMethod: 'heuristic_fallback',
           error: error instanceof Error ? error.message : 'Unknown error',
         }
-      };
+      } as ProfileScoreReport & { provenance: ProvenanceInfo };
     }
+  }
+
+  async scoreSection(
+    sectionType: string,
+    content: string,
+    metrics: Record<string, number>,
+    platform: string
+  ): Promise<{ score: number; provenance: string; confidence: number }> {
+    if (!this.useRanker || !this.rankerService) {
+      const score = this.computeHeuristicScore(metrics);
+      return { score, provenance: 'heuristic', confidence: score };
+    }
+
+    const scoredItem: ScoredItem = {
+      id: `section_${sectionType}`,
+      platform,
+      section: sectionType,
+      sourceRef: content.substring(0, 100),
+      score: 0,
+      metrics,
+    };
+
+    const result = await this.rankerService.scoreItem(scoredItem);
+    return {
+      score: result.score,
+      provenance: result.provenance,
+      confidence: result.score,
+    };
   }
 
   async compareVariants(
@@ -147,17 +159,6 @@ export class RankerAwareScoringService {
       scores: { a: result.aScore, b: result.bScore },
       provenance: result.provenance,
       confidence: result.confidence,
-    };
-  }
-
-  private extractSectionMetrics(section: any): Record<string, number> {
-    return {
-      clarity: (section.metrics?.clarity || section.clarity || 0.5) * 100,
-      impact: (section.metrics?.impact || section.impact || 0.5) * 100,
-      relevance: (section.metrics?.relevance || section.relevance || 0.5) * 100,
-      readability: section.wordCount ? Math.min(100, section.wordCount / 2) : 50,
-      keyword_density: section.keywords ? section.keywords.length * 10 : 0,
-      completeness: section.completeness || 0.5,
     };
   }
 

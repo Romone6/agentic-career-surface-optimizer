@@ -1,7 +1,6 @@
 import { getDatabase } from '@ancso/core';
 import { Logger } from '@ancso/core';
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 
 export interface RankerConfig {

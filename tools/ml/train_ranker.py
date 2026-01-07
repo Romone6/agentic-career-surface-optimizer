@@ -47,16 +47,24 @@ MIN_PAIRS_REQUIRED = 10
 class PairwiseRankingDataset(Dataset):
     """Dataset for pairwise ranking training."""
 
-    def __init__(self, data: List[Dict], metrics_dim: int = DEFAULT_METRICS_DIM):
+    def __init__(
+        self,
+        data: List[Dict],
+        metrics_dim: int = DEFAULT_METRICS_DIM,
+        embedding_dim: int = DEFAULT_EMBEDDING_DIM,
+    ):
         """Initialize dataset from JSONL rows."""
         self.data = []
         self.metrics_dim = metrics_dim
+        self.embedding_dim = embedding_dim
         self.feature_names = []
 
         for row in data:
             try:
                 a_metrics = row.get("a_metrics", [])
                 b_metrics = row.get("b_metrics", [])
+                a_embedding = row.get("a_embedding", [])
+                b_embedding = row.get("b_embedding", [])
                 label = row.get("label", 0)
 
                 if (
@@ -65,10 +73,23 @@ class PairwiseRankingDataset(Dataset):
                 ):
                     continue
 
+                a_emb = (
+                    np.array(a_embedding, dtype=np.float32)
+                    if a_embedding
+                    else np.zeros(self.embedding_dim, dtype=np.float32)
+                )
+                b_emb = (
+                    np.array(b_embedding, dtype=np.float32)
+                    if b_embedding
+                    else np.zeros(self.embedding_dim, dtype=np.float32)
+                )
+
                 self.data.append(
                     {
                         "a_metrics": np.array(a_metrics, dtype=np.float32),
                         "b_metrics": np.array(b_metrics, dtype=np.float32),
+                        "a_embedding": a_emb,
+                        "b_embedding": b_emb,
                         "label": label,
                     }
                 )
@@ -95,6 +116,8 @@ class PairwiseRankingDataset(Dataset):
         return {
             "a_metrics": torch.tensor(item["a_metrics"]),
             "b_metrics": torch.tensor(item["b_metrics"]),
+            "a_embedding": torch.tensor(item["a_embedding"]),
+            "b_embedding": torch.tensor(item["b_embedding"]),
             "label": torch.tensor(item["label"], dtype=torch.float32),
         }
 
@@ -191,12 +214,9 @@ def train_epoch(
     for batch in tqdm(dataloader, desc="Training", leave=False):
         a_metrics = batch["a_metrics"].to(device)
         b_metrics = batch["b_metrics"].to(device)
+        a_embeddings = batch["a_embedding"].to(device)
+        b_embeddings = batch["b_embedding"].to(device)
         labels = batch["label"].to(device)
-
-        # Create dummy embeddings (in real use, these would come from embeddings)
-        batch_size = a_metrics.shape[0]
-        a_embeddings = torch.randn(batch_size, DEFAULT_EMBEDDING_DIM).to(device)
-        b_embeddings = torch.randn(batch_size, DEFAULT_EMBEDDING_DIM).to(device)
 
         optimizer.zero_grad()
 
@@ -229,11 +249,9 @@ def evaluate(
         for batch in tqdm(dataloader, desc="Evaluating", leave=False):
             a_metrics = batch["a_metrics"].to(device)
             b_metrics = batch["b_metrics"].to(device)
+            a_embeddings = batch["a_embedding"].to(device)
+            b_embeddings = batch["b_embedding"].to(device)
             labels = batch["label"].to(device)
-
-            batch_size = a_metrics.shape[0]
-            a_embeddings = torch.randn(batch_size, DEFAULT_EMBEDDING_DIM).to(device)
-            b_embeddings = torch.randn(batch_size, DEFAULT_EMBEDDING_DIM).to(device)
 
             a_scores, b_scores, diff = model(
                 a_embeddings, a_metrics, b_embeddings, b_metrics
@@ -244,7 +262,7 @@ def evaluate(
             total_loss += loss.item()
             total_acc += compute_accuracy(a_scores, b_scores, labels)
 
-            for i in range(batch_size):
+            for i in range(a_scores.shape[0]):
                 predictions.append(
                     {
                         "a_score": a_scores[i].item(),

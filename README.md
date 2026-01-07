@@ -9,6 +9,7 @@ A personal-first, open-source, local-first agentic system that learns what elite
 - **Resume Generation**: Generates ATS-focused and investor-focused resumes
 - **Cover Letter Generation**: Creates personalized cover letters based on job descriptions
 - **Continuous Learning**: Continuously learns from public exemplars and career commentary
+- **Benchmark Library**: Learns from 50+ elite LinkedIn profiles (founders, engineers, investors)
 
 ## Quick Start
 
@@ -25,14 +26,27 @@ pnpm run doctor
 
 # Start the questionnaire to build your fact store
 pnpm run facts:new
+```
 
-# Analyze your current profiles
-pnpm run profile:analyze
+## Benchmark Library
 
-# Generate and apply optimizations
-pnpm run profile:plan
-pnpm run profile:apply:github
-pnpm run profile:apply:linkedin
+This project includes a benchmark library of 50 elite LinkedIn profiles for data-driven optimization.
+
+```bash
+# Import LinkedIn benchmark profiles
+pnpm cli benchmarks:add:linkedin --file data/benchmarks/linkedin.seed.json
+
+# Ingest profiles (requires LINKEDIN_RUN_ALLOW=true and browser login)
+LINKEDIN_RUN_ALLOW=true pnpm cli benchmarks:ingest:linkedin --limit 50
+
+# Generate embeddings for similarity search
+pnpm cli benchmarks:embed
+
+# Find similar benchmarks to your profile
+pnpm cli benchmarks:neighbors --text "Your headline" --platform linkedin --section about --k 5
+
+# Generate data-driven optimization plan
+pnpm cli profile:plan --mode data-driven --platform linkedin
 ```
 
 ## Architecture
@@ -41,11 +55,11 @@ This is a monorepo with the following structure:
 
 - `apps/cli`: Main CLI application
 - `apps/ui`: Optional web UI (feature-flagged)
-- `packages/core`: Core types, config, logging, storage
-- `packages/llm`: OpenRouter client, prompt templates, caching
+- `packages/core`: Core types, config, logging, storage, benchmark services
+- `packages/llm`: OpenRouter client, prompt templates, truthfulness validation
 - `packages/scoring`: Rubrics, validators, diff engine
-- `packages/adapters`: GitHub and LinkedIn adapters
-- `packages/automation`: Playwright drivers and site runners
+- `packages/adapters`: GitHub and LinkedIn adapters with OAuth
+- `packages/automation`: Playwright drivers for LinkedIn automation
 - `packages/ml`: Embeddings and ranker training scaffold
 
 ## Safety & Compliance

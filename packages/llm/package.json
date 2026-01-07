@@ -1,0 +1,35 @@
+{
+  "name": "@ancso/llm",
+  "version": "0.1.0",
+  "description": "LLM package for Agentic Neural Career Surface Optimizer",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@ancso/core": "0.1.0",
+    "zod": "^3.21.4",
+    "openai": "^4.0.0",
+    "axios": "^1.0.0",
+    "lodash": "^4.17.0",
+    "crypto-js": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/lodash": "^4.14.0",
+    "@types/crypto-js": "^4.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "@types/jest": "^29.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "prettier": "^3.0.0"
+  }
+}

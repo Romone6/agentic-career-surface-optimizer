@@ -1,0 +1,56 @@
+{
+  "name": "agentic-neural-career-optimizer",
+  "version": "0.1.0",
+  "description": "A personal-first, open-source, local-first agentic system that learns what elite LinkedIn + GitHub profiles look like and why, then aggressively optimizes your profiles.",
+  "author": "Agentic Neural Career Surface Optimizer",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "turbo run format",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules .turbo dist"
+  },
+  "devDependencies": {
+    "turbo": "^1.10.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^13.0.0",
+    "prettier": "^3.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "prettier": {
+    "semi": true,
+    "singleQuote": false,
+    "tabWidth": 2,
+    "trailingComma": "es5",
+    "printWidth": 100,
+    "arrowParens": "always"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+"husky": {
+    "hooks": {
+      "pre-commit": "lint-staged",
+      "pre-push": "pnpm run test"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+# Simplified Machine Learning Training Requirements
+# Minimal requirements for pairwise ranker training
+
+# Core ML libraries
+numpy>=1.20.0
+scipy>=1.7.0
+scikit-learn>=1.0.0
+pandas>=1.3.0
+
+# PyTorch for training (minimal installation)
+torch>=1.12.0
+
+# ONNX for model export
+onnx>=1.10.0
+onnxruntime>=1.10.0
+
+# Utility libraries
+tqdm>=4.60.0
+
+# Type checking (optional)
+mypy>=0.900
+
+# Testing (optional)
+pytest>=7.0.0

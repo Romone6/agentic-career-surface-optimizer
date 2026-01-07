@@ -16,9 +16,9 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@ancso/automation": "0.1.0",
-    "@ancso/core": "0.1.0",
-    "@ancso/llm": "0.1.0",
+    "@ancso/automation": "workspace:*",
+    "@ancso/core": "workspace:*",
+    "@ancso/llm": "workspace:*",
     "chalk": "^5.0.0",
     "commander": "^11.0.0",
     "figlet": "^1.0.0",

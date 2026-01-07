@@ -9,6 +9,10 @@ data/
 storage/
 cache/
 logs/
+data/ranker/*.jsonl
+models/
+*.onnx
+ranker_models/
 
 # Playwright
 trace.zip

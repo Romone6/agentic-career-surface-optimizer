@@ -112,3 +112,15 @@ export const KeyFactsSchema = z.object({
 });
 
 export type KeyFacts = z.infer<typeof KeyFactsSchema>;
+
+// Provenance Schema for ranker integration
+export const ProvenanceInfoSchema = z.object({
+  rankerActive: z.boolean().default(false),
+  scoringMethod: z.enum(['heuristic', 'ranker', 'heuristic_fallback']),
+  modelVersion: z.string().optional(),
+  rankedAt: z.string().datetime().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  error: z.string().optional(),
+});
+
+export type ProvenanceInfo = z.infer<typeof ProvenanceInfoSchema>;

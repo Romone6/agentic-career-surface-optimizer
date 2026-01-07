@@ -1,293 +1,274 @@
-# Machine Learning Training Guide
+# Ranker Model Training Guide
 
-This guide explains how to train the pairwise ranker model using the provided training scaffold.
+This document describes how to train and deploy a trainable neural network ranker for profile optimization.
 
 ## Overview
 
-The pairwise ranker uses a neural network to learn preferences between items (e.g., profile sections, projects, skills). It's trained using margin ranking loss on pairwise preference data collected through the CLI.
+The ranker is a pairwise ranking model that learns to prefer better profile content based on:
+- **Embeddings**: Text embeddings from OpenRouter API
+- **Metrics**: Quantitative metrics (clarity, impact, relevance, etc.)
+- **Training Signals**: User preferences, benchmark comparisons, before/after changes
 
 ## Prerequisites
 
-1. **Python 3.8+** installed
-2. **Node.js** for the main application
-3. **Dataset** collected using the ranker CLI commands
-
-## Setup
-
-### 1. Install Python Dependencies
+### Python Environment
 
 ```bash
 cd tools/ml
+
+# Create virtual environment
+python3 -m venv venv
+
+# Activate it
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Collect Training Data
+Required packages:
+- `torch` - PyTorch for model training
+- `numpy` - Numerical operations
+- `onnx` - ONNX model format
+- `onnxruntime` - ONNX inference
+- `tqdm` - Progress bars
 
-Use the CLI commands to collect pairwise preferences:
+## Quick Start
+
+### Step 1: Bootstrap Initial Training Data
 
 ```bash
-# Add pairwise preferences interactively
-pnpm run profile ranker add-pair --interactive
+# Bootstrap 200 pairs from GitHub benchmarks
+pnpm cli ranker:bootstrap --platform github --n-pairs 200
 
-# Or add preferences via command line
-pnpm run profile ranker add-pair \
-  --item-type project \
-  --item-a proj-1 \
-  --item-b proj-2 \
-  --label 1 \
-  --reason-tags relevance,metrics
-
-# Export dataset to JSONL format
-pnpm run profile ranker export --output dataset.jsonl
+# Or LinkedIn
+pnpm cli ranker:bootstrap --platform linkedin --n-pairs 200
 ```
 
-## Training the Model
+This creates initial training pairs using heuristic quality signals from benchmark profiles.
 
-### Basic Training
+### Step 2: Export Dataset
+
+```bash
+# Export to data/ranker directory
+pnpm cli ranker:export --out data/ranker
+```
+
+This creates:
+- `data/ranker/dataset.jsonl` - Training pairs in JSONL format
+- `data/ranker/metadata.json` - Dataset metadata with feature names
+
+### Step 3: Train Model
+
+```bash
+# Train the ranker model
+pnpm cli ranker:train --epochs 50 --batch-size 32
+```
+
+This:
+1. Reads the exported dataset
+2. Trains a neural network with margin ranking loss
+3. Exports to ONNX format
+4. Activates the model for inference
+
+### Step 4: Verify Status
+
+```bash
+# Check if ranker is active
+pnpm cli ranker:status
+
+# Run smoke test
+pnpm cli ranker:smoke
+```
+
+## Manual Workflow
+
+### Dataset Export
+
+```bash
+# Export specific platform
+pnpm cli ranker:export --platform github --out data/ranker/github
+
+# Export with statistics only
+pnpm cli ranker:export --stats
+```
+
+### Manual Training (Python)
 
 ```bash
 cd tools/ml
-python train_ranker.py --input dataset.jsonl --output models/pairwise_ranker
+
+# Activate venv
+source venv/bin/activate
+
+# Run training script directly
+python train_ranker.py \
+  --input ../../data/ranker/dataset.jsonl \
+  --output ../../models \
+  --epochs 50 \
+  --batch-size 32
 ```
 
-### Advanced Training Options
+### Model Files
+
+Training produces:
+- `models/ranker.onnx` - The neural network model
+- `models/ranker_metadata.json` - Model metadata (dims, features, metrics)
+- `models/active_model.json` - Pointer to active model
+
+## Adding Training Signals
+
+### Manual Labeling
 
 ```bash
-python train_ranker.py \
-  --input dataset.jsonl \
-  --output models/pairwise_ranker \
-  --name custom_ranker \
-  --embedding-dim 1536 \
-  --hidden-dim 256 \
-  --learning-rate 0.001 \
-  --batch-size 32 \
-  --epochs 50 \
-  --margin 1.0
+# Get item IDs from database, then label a pair
+pnpm cli ranker:label --a <item_id_a> --b <item_id_b> --better a --tags clarity,impact
 ```
 
-### Training Parameters
+### Capturing User Choices
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--input` | Required | Path to JSONL dataset file |
-| `--output` | Required | Output directory for model artifacts |
-| `--name` | `pairwise_ranker` | Model name prefix |
-| `--embedding-dim` | 1536 | Embedding dimension |
-| `--hidden-dim` | 256 | Hidden layer dimension |
-| `--learning-rate` | 0.001 | Learning rate |
-| `--batch-size` | 32 | Batch size |
-| `--epochs` | 50 | Number of training epochs |
-| `--margin` | 1.0 | Margin for ranking loss |
+When users choose between A/B variants, pairs are automatically captured with:
+- `source: user_choice`
+- Reason tags from the comparison
 
-## Output Files
+### Before/After Tracking
 
-The training script produces several output files:
+When content is optimized and applied:
+- Pairs are created with `source: before_after`
+- Labels indicate improvement direction
 
-### 1. PyTorch Model (`*.pth`)
-- Native PyTorch model checkpoint
-- Contains trained weights and architecture
-- Can be loaded for further training
+## Architecture
 
-### 2. ONNX Model (`*.onnx`)
-- Optimized model in ONNX format
-- Cross-platform and language-agnostic
-- Recommended for production inference
-
-### 3. Metadata JSON (`*_metadata.json`)
-- Training configuration and statistics
-- Loss history and performance metrics
-- Dataset information
-
-Example output structure:
-```
-models/
-├── pairwise_ranker.pth        # PyTorch model
-├── pairwise_ranker.onnx       # ONNX model
-└── pairwise_ranker_metadata.json # Training metadata
-```
-
-## Model Architecture
-
-The pairwise ranker uses a simple but effective architecture:
-
-1. **Shared Feature Extractor**: 2-layer MLP with ReLU activation
-2. **Scoring Head**: Linear layer to produce scalar scores
-3. **Loss Function**: Margin ranking loss
+### Neural Network
 
 ```
-Input (embedding + metrics) 
-  → Shared MLP (ReLU, Dropout) 
-  → Score Head (Linear) 
-  → Score Difference (score_a - score_b)
-  → Margin Ranking Loss
+Input: [embedding (1536D) + metrics (6D)] = 1542D
+  ↓
+Shared MLP: Linear(1542→128) → ReLU → Dropout → Linear(128→64) → ReLU
+  ↓
+Score Head: Linear(64→1)
+  ↓
+Output: Scalar score
 ```
 
-## Dataset Format
+### Training Loss
 
-The training script expects a JSONL file with the following format:
-
-```json
-{"item_a": {...}, "item_b": {...}, "label": 1, "reason_tags": [...], "similarity": 0.85}
-{"item_a": {...}, "item_b": {...}, "label": -1, "reason_tags": [...], "similarity": 0.65}
-...
+Margin Ranking Loss:
+```
+L = max(0, margin - label * (score_A - score_B))
 ```
 
-### Item Structure
+Where `label = 1` if A > B, `-1` if B > A.
 
-Each item should contain:
-- `id`: Unique identifier
-- `item_type`: Type of item (profile_section, project, skill, etc.)
-- `item_reference_id`: Reference to the original item
-- `embedding`: Embedding vector (optional)
-- `embedding_id`: Reference to embedding (optional)
-- `metrics`: Heuristic metrics
-- `created_at`: Timestamp
+### Inference
 
-### Label Meaning
+The model can be used for:
+1. **Item Scoring**: Score a single profile section
+2. **Comparison**: Compare two items and return preference
+3. **Ranking**: Rank multiple items by score
 
-- `1`: Item A is preferred over Item B
-- `0`: Items are equally preferred
-- `-1`: Item B is preferred over Item A
+## Fallback Behavior
 
-## Training Tips
-
-### 1. Dataset Quality
-
-- **Balance**: Aim for balanced distribution of labels (-1, 0, 1)
-- **Diversity**: Include diverse item types and scenarios
-- **Size**: Minimum 100-200 samples for reasonable performance
-
-### 2. Hyperparameter Tuning
-
-Start with default parameters and adjust based on validation performance:
-
-- **Learning Rate**: Try 0.01, 0.001, 0.0001
-- **Batch Size**: Try 16, 32, 64
-- **Margin**: Try 0.5, 1.0, 2.0
-
-### 3. Monitoring Training
-
-Watch the loss curve during training:
-- Loss should decrease steadily
-- If loss plateaus, try increasing model capacity or learning rate
-- If loss oscillates, try decreasing learning rate
-
-## Inference
-
-### Using the Trained Model
-
-The trained model can be used in the main application for ranking:
+If ONNX runtime is not available or model is missing, the system falls back to heuristic scoring:
 
 ```typescript
-// Load ONNX model in the main application
-import { InferenceSession } from 'onnxruntime-web';
-
-const session = await InferenceSession.create('models/pairwise_ranker.onnx');
-
-// Prepare input tensors
-const inputA = ... // Feature vector for item A
-const inputB = ... // Feature vector for item B
-
-// Run inference
-const results = await session.run({
-  'input_a': new Float32Array(inputA.flat()),
-  'input_b': new Float32Array(inputB.flat())
-});
-
-const scoreDiff = results['score_diff'][0];
-```
-
-### Ranking Items
-
-```typescript
-// Rank a list of items using pairwise comparisons
-async function rankItems(items: any[], session: InferenceSession) {
-  const scores = await Promise.all(
-    items.map(async (item, index) => {
-      // Compare with reference item (e.g., first item)
-      if (index === 0) return 0;
-      
-      const scoreDiff = await runInference(session, items[0], item);
-      return scoreDiff;
-    })
+function heuristicScore(metrics): number {
+  return (
+    clarity * 0.3 +
+    impact * 0.4 +
+    keyword_score * 0.3
   );
-  
-  // Sort by score
-  return items.sort((a, b) => {
-    const scoreA = scores[items.indexOf(a)];
-    const scoreB = scores[items.indexOf(b)];
-    return scoreB - scoreA; // Higher score first
-  });
 }
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
-1. **CUDA Out of Memory**: Reduce batch size or use CPU
-2. **NaN Loss**: Check dataset for invalid values
-3. **Slow Training**: Use smaller model or fewer epochs
-4. **Poor Performance**: Collect more diverse data
-
-### Debugging
+### Python venv Issues
 
 ```bash
-# Run with verbose logging
-python train_ranker.py --input dataset.jsonl --output models/debug --epochs 5
-
-# Check dataset quality
-python -c "
-import json
-with open('dataset.jsonl') as f:
-    data = [json.loads(line) for line in f]
-    labels = [row['label'] for row in data]
-    print(f'Label distribution: {dict(zip(*np.unique(labels, return_counts=True)))})'
-"
+# Recreate venv
+rm -rf tools/ml/venv
+python3 -m venv tools/ml/venv
+source tools/ml/venv/bin/activate
+pip install -r tools/ml/requirements.txt
 ```
 
-## Best Practices
-
-1. **Version Control**: Track model versions and datasets
-2. **Experimentation**: Log all training runs with parameters
-3. **Validation**: Set aside validation data for tuning
-4. **Monitoring**: Track model performance in production
-5. **Retraining**: Update models periodically with new data
-
-## Example Workflow
+### No Training Pairs
 
 ```bash
-# 1. Collect data
-pnpm run profile ranker add-pair --interactive
+# Check existing pairs
+pnpm cli ranker:status
 
-# 2. Export dataset
-pnpm run profile ranker export --output data/dataset.jsonl
-
-# 3. Train model
-cd tools/ml
-python train_ranker.py --input ../data/dataset.jsonl --output ../models/ranker_v1
-
-# 4. Evaluate model
-python -c "
-import json
-with open('../models/ranker_v1_metadata.json') as f:
-    metadata = json.load(f)
-    print(f'Final loss: {metadata[\"loss_history\"][-1]:.4f}')
-    print(f'Training time: {metadata[\"training_time\"]:.2f}s')
-"
-
-# 5. Deploy model
-# Copy ONNX model to production directory
-cp ../models/ranker_v1.onnx ../public/models/
+# Bootstrap more pairs
+pnpm cli ranker:bootstrap --platform github --n-pairs 500
 ```
 
-## References
+### Model Not Activating
 
-- [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
-- [ONNX Runtime](https://onnxruntime.ai/)
-- [Margin Ranking Loss](https://pytorch.org/docs/stable/generated/torch.nn.MarginRankingLoss.html)
-- [Pairwise Learning to Rank](https://en.wikipedia.org/wiki/Learning_to_rank#Pairwise_approach)
+```bash
+# Check model files
+ls -la models/
 
-## License
+# Manually activate
+# Edit models/active_model.json with correct filenames
+```
 
-This training scaffold is provided as-is under the MIT License. Use at your own risk and adapt to your specific needs.
+### ONNX Runtime Missing
+
+```bash
+# Install onnxruntime-node (optional)
+npm install onnxruntime-node
+
+# Without it, fallback to heuristics
+pnpm cli ranker:smoke
+# Should show "provenance: heuristic"
+```
+
+## API Reference
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `pnpm cli ranker:status` | Show model status and dataset stats |
+| `pnpm cli ranker:smoke` | Test model inference |
+| `pnpm cli ranker:export` | Export dataset to JSONL |
+| `pnpm cli ranker:bootstrap` | Create initial training pairs |
+| `pnpm cli ranker:train` | Train and activate model |
+| `pnpm cli ranker:label` | Manually label a pair |
+
+### Node.js API
+
+```typescript
+import { RankerInferenceService } from '@ancso/ml';
+
+const ranker = new RankerInferenceService();
+await ranker.initialize();
+
+// Score an item
+const { score, provenance } = await ranker.scoreItem({
+  id: '1',
+  platform: 'linkedin',
+  section: 'headline',
+  sourceRef: 'Experienced software engineer',
+  score: 0,
+  metrics: { clarity: 0.8, impact: 0.7, relevance: 0.9 }
+});
+
+// Compare two items
+const result = await ranker.compare(itemA, itemB);
+// result: { aScore, bScore, preference, confidence, provenance }
+```
+
+## Performance
+
+- **Training**: ~1-5 minutes on CPU for 50 epochs with 200 pairs
+- **Inference**: <10ms per item on CPU
+- **Memory**: Model uses ~200KB
+
+## Next Steps
+
+1. **Collect More Data**: Add more pairs from user interactions
+2. **Fine-tune**: Adjust hyperparameters in `train_ranker.py`
+3. **Embeddings**: Connect to actual embedding storage for real embeddings
+4. **Evaluation**: Add A/B testing to measure real-world improvement

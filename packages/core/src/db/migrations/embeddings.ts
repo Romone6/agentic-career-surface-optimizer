@@ -1,4 +1,4 @@
-import { Migration } from '../database';
+import { Migration } from '../../storage/database';
 
 export const EMBEDDING_MIGRATIONS: Migration[] = [
   {

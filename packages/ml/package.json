@@ -12,8 +12,8 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@ancso/core": "0.1.0",
-    "@ancso/llm": "0.1.0",
+    "@ancso/core": "workspace:*",
+    "@ancso/llm": "workspace:*",
     "zod": "^3.21.4"
   },
   "devDependencies": {

@@ -33,3 +33,4 @@ export { SQLiteArtifactGraphRepository } from './storage/repositories/artifact-g
 export { SQLiteProfileOptimizationRepository } from './storage/repositories/profile-optimization';
 export { SQLiteJobMatchingRepository } from './storage/repositories/job-matching';
 export { SQLiteLlmCacheRepository } from './storage/repositories/llm-cache';
+export { SQLiteRankItemRepository, SQLiteRankPairRepository, SQLiteRankRunRepository } from './storage/repositories/ranker';

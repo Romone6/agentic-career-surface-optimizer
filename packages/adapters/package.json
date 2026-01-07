@@ -12,7 +12,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@ancso/core": "0.1.0",
+    "@ancso/core": "workspace:*",
     "axios": "^1.0.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.0.0",

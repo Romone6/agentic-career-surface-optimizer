@@ -10,6 +10,9 @@ import { resumeCommands } from './commands/resume';
 import { coverletterCommands } from './commands/coverletter';
 import { jobCommands } from './commands/job';
 import { benchmarksCommands } from './commands/benchmarks';
+import { rankerCommands } from './commands/ranker';
+import { rankerExportCommand } from './commands/rankerExport';
+import { rankerAddPairCommand } from './commands/rankerAddPair';
 
 export function setupCommands(program: Command): void {
   // Core commands
@@ -38,4 +41,10 @@ export function setupCommands(program: Command): void {
 
   // Benchmark library commands
   program.addCommand(benchmarksCommands());
+
+  // Ranker commands
+  const rankerCommand = rankerCommands();
+  rankerCommand.addCommand(rankerExportCommand());
+  rankerCommand.addCommand(rankerAddPairCommand());
+  program.addCommand(rankerCommand);
 }

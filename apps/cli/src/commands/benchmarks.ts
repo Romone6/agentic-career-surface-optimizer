@@ -196,14 +196,6 @@ function benchmarksCommands(): Command {
       }
     }));
 
-        console.log(chalk.green('\n🎉 GitHub profile ingestion complete'));
-
-      } catch (error) {
-        console.error(chalk.red('Failed to ingest GitHub profiles:'), error instanceof Error ? error.message : 'Unknown error');
-        process.exit(1);
-      }
-    }));
-
   command.addCommand(new Command('ingest:linkedin')
     .description('Extract LinkedIn profile data using Playwright')
     .option('--limit <number>', 'Number of profiles to ingest', '10')

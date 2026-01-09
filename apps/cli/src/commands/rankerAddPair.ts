@@ -302,22 +302,19 @@ export function rankerAddPairCommand(): Command {
       }
     });
 
-  private createMetricsForItem(itemType: string, itemReferenceId: string, factStore: any): Record<string, number> {
-    // Create heuristic metrics based on item type
+  function createMetricsForItem(itemType: string, itemReferenceId: string, factStore: any): Record<string, number> {
     const metrics: Record<string, number> = {};
 
     switch (itemType) {
       case 'profile_section':
-        // For profile sections, use length and keyword density
         const section = factStore[itemReferenceId as keyof typeof factStore];
         if (typeof section === 'string') {
           metrics.length = section.length;
-          metrics.keyword_density = this.calculateKeywordDensity(section);
+          metrics.keyword_density = calculateKeywordDensity(section);
         }
         break;
 
       case 'project':
-        // For projects, use technology count and achievement count
         const project = factStore.projects.find((p: any) => p.id === itemReferenceId);
         if (project) {
           metrics.technology_count = project.technologies?.length || 0;
@@ -327,7 +324,6 @@ export function rankerAddPairCommand(): Command {
         break;
 
       case 'skill':
-        // For skills, use years of experience and map proficiency to score
         const skill = factStore.skills.find((s: any) => s.id === itemReferenceId);
         if (skill) {
           metrics.years_experience = skill.yearsExperience || 0;
@@ -344,20 +340,18 @@ export function rankerAddPairCommand(): Command {
         break;
 
       case 'experience':
-        // For experience, use years and achievement count
         const experience = factStore.experience.find((e: any) => e.id === itemReferenceId);
         if (experience) {
-          metrics.years = this.calculateYears(experience.startDate, experience.endDate);
+          metrics.years = calculateYears(experience.startDate, experience.endDate);
           metrics.achievement_count = experience.achievements?.length || 0;
           metrics.skill_count = experience.skillsUsed?.length || 0;
         }
         break;
 
       case 'education':
-        // For education, use GPA if available
         const education = factStore.education.find((e: any) => e.id === itemReferenceId);
         if (education) {
-          metrics.years = this.calculateYears(education.startDate, education.endDate);
+          metrics.years = calculateYears(education.startDate, education.endDate);
           if (education.gpa) {
             metrics.gpa = parseFloat(education.gpa);
           }
@@ -365,7 +359,6 @@ export function rankerAddPairCommand(): Command {
         break;
 
       default:
-        // For custom types, just add a basic score
         metrics.heuristic_score = 1.0;
         break;
     }
@@ -373,8 +366,7 @@ export function rankerAddPairCommand(): Command {
     return metrics;
   }
 
-  private calculateKeywordDensity(text: string): number {
-    // Simple keyword density calculation
+  function calculateKeywordDensity(text: string): number {
     const keywords = ['experience', 'skill', 'project', 'achievement', 'result', 'impact'];
     const textLower = text.toLowerCase();
     
@@ -388,7 +380,7 @@ export function rankerAddPairCommand(): Command {
     return keywordCount / text.length;
   }
 
-  private calculateYears(startDate: string, endDate?: string): number {
+  function calculateYears(startDate: string, endDate?: string): number {
     try {
       const startYear = new Date(startDate).getFullYear();
       const endYear = endDate ? new Date(endDate).getFullYear() : new Date().getFullYear();
@@ -397,4 +389,6 @@ export function rankerAddPairCommand(): Command {
       return 0;
     }
   }
+
+  return command;
 }

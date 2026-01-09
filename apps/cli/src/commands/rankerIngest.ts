@@ -1,26 +1,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import https from 'https';
-import sqlite3 from 'sqlite3';
-import { SQLiteBenchmarkProfileRepository, SQLiteBenchmarkSectionRepository } from '@ancso/core';
-
-function normalizeUsername(username: string): string {
-  return username.trim().toLowerCase();
-}
-
-function getDbPath(): string {
-  const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'ranker', 'benchmark.db');
-  const dbDir = path.dirname(dbPath);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  return dbPath;
-}
-
-function getDb(): sqlite3.Database {
-  return new sqlite3.Database(getDbPath());
-}
+import { getDb, getDbPath, normalizeUsername, dbRunAsync, dbGetAsync } from '../db';
 
 function httpRequest(url: string, headers: Record<string, string> = {}): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -90,24 +72,6 @@ async function getUserReadme(username: string, token?: string): Promise<string |
     }
   }
   return null;
-}
-
-function dbRunAsync(db: sqlite3.Database, sql: string, params: any[] = []): Promise<void> {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, (err: Error | null) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-}
-
-function dbGetAsync<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T | null> {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err: Error | null, row: T) => {
-      if (err) reject(err);
-      else resolve(row || null);
-    });
-  });
 }
 
 async function doIngest(profilesToIngest: string[], refresh: boolean, token?: string): Promise<void> {

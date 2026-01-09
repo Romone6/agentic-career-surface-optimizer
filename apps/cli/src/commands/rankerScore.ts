@@ -2,33 +2,16 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-import https from 'https';
-import sqlite3 from 'sqlite3';
-
-function normalizeUsername(username: string): string {
-  return username.trim().toLowerCase();
-}
-
-function getDbPath(): string {
-  const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'ranker', 'benchmark.db');
-  const dbDir = path.dirname(dbPath);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  return dbPath;
-}
+import { getDb, getDbPath, normalizeUsername, dbAllAsync } from '../db';
 
 function getModelPath(): string {
   return path.join(process.cwd(), 'models', 'ranker.json');
 }
 
-function getDb(): sqlite3.Database {
-  return new sqlite3.Database(getDbPath());
-}
-
-function getProfileSectionsByUsername(username: string): Promise<Array<{ id: string; section_type: string; content: string; word_count: number }>> {
+async function getProfileSectionsByUsername(username: string): Promise<Array<{ id: string; section_type: string; content: string; word_count: number }>> {
+  const db = getDb();
+  const normalizedUsername = normalizeUsername(username);
   return new Promise((resolve, reject) => {
-    const db = getDb();
-    const normalizedUsername = normalizeUsername(username);
     db.all(`
       SELECT s.id, s.section_type, s.content, s.word_count
       FROM benchmark_sections s

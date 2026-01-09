@@ -11,6 +11,17 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/index.ts",
+    "src/db.ts",
+    "src/commands.ts",
+    "src/commands/ranker.ts",
+    "src/commands/rankerExport.ts",
+    "src/commands/rankerAddPair.ts",
+    "src/commands/rankerIngest.ts",
+    "src/commands/rankerScore.ts",
+    "src/commands/doctor.ts",
+    "src/commands/init.ts"
+  ],
   "exclude": ["node_modules", "**/*.test.ts"]
 }

@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { execSync } from 'child_process';
-import { getConfig } from '@ancso/core';
+import fs from 'fs';
+import path from 'path';
+import { getDbPath, initDb, dbAll } from '../db';
 
 export function doctorCommand(): Command {
   return new Command('doctor')
@@ -10,45 +11,38 @@ export function doctorCommand(): Command {
       console.log(chalk.blue('Running system health check...\n'));
 
       try {
-        // Check configuration
-        const config = getConfig();
-        console.log('✅ Configuration loaded successfully');
+        console.log(`✅ Node.js version: ${process.version}`);
+        console.log(`✅ Working directory: ${process.cwd()}`);
 
-        // Check Node.js version
-        const nodeVersion = process.version;
-        console.log(`✅ Node.js version: ${nodeVersion}`);
-
-        // Check dependencies
-        try {
-          execSync('pnpm --version', { stdio: 'pipe' });
-          console.log('✅ pnpm is installed');
-        } catch {
-          console.log('⚠️  pnpm not found, using npm');
-        }
-
-        // Check required environment variables
-        const requiredVars = [
-          { name: 'OPENROUTER_API_KEY', value: config.OPENROUTER_API_KEY },
-          { name: 'GITHUB_OAUTH_CLIENT_ID', value: config.GITHUB_OAUTH_CLIENT_ID },
-          { name: 'GITHUB_OAUTH_CLIENT_SECRET', value: config.GITHUB_OAUTH_CLIENT_SECRET },
-        ];
-
-        let hasMissingVars = false;
-        requiredVars.forEach((varInfo) => {
-          if (!varInfo.value || varInfo.value === 'your_key_here') {
-            console.log(`❌ Missing required variable: ${varInfo.name}`);
-            hasMissingVars = true;
-          } else {
-            console.log(`✅ ${varInfo.name}: Configured`);
-          }
-        });
-
-        if (hasMissingVars) {
-          console.log('\n⚠️  Some required configuration variables are missing.');
-          console.log('Please edit your .env file and set the missing values.');
+        const sqlitePath = getDbPath();
+        console.log(`✅ DB path: ${sqlitePath}`);
+        
+        const dbDir = path.dirname(sqlitePath);
+        if (fs.existsSync(dbDir)) {
+          console.log(`✅ DB directory exists: ${dbDir}`);
         } else {
-          console.log('\n🎉 All systems healthy! You can start using the CLI.');
+          console.log(`❌ DB directory missing: ${dbDir}`);
         }
+
+        try {
+          await initDb();
+          console.log('✅ Database initialized');
+          
+          const profiles = dbAll<any>('SELECT id FROM benchmark_profiles');
+          const sections = dbAll<any>('SELECT id FROM benchmark_sections');
+          
+          console.log(`✅ Database has ${profiles.length} profiles, ${sections.length} sections`);
+        } catch (dbError) {
+          console.log(`❌ Database error: ${dbError instanceof Error ? dbError.message : 'Unknown error'}`);
+        }
+
+        if (process.env.GITHUB_TOKEN) {
+          console.log('✅ GITHUB_TOKEN is set');
+        } else {
+          console.log('ℹ️  GITHUB_TOKEN not set (will use unauthenticated GitHub API)');
+        }
+
+        console.log('\n🎉 System check complete!');
 
       } catch (error) {
         console.error(chalk.red('Health check failed:'), error instanceof Error ? error.message : 'Unknown error');

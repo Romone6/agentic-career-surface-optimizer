@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import crypto from 'crypto';
 import https from 'https';
-import { getDb, getDbPath, normalizeUsername, dbRunAsync, dbGetAsync } from '../db';
+import { initDb, getDb, getDbPath, normalizeUsername, dbRun, dbGet, saveDb } from '../db';
 
 function httpRequest(url: string, headers: Record<string, string> = {}): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -84,14 +84,12 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
   let skipped = 0;
   let errors = 0;
 
-  const db = getDb();
-
   for (const username of profilesToIngest) {
     const normalizedUsername = normalizeUsername(username);
     console.log(`  Processing: ${normalizedUsername}`);
 
     try {
-      const existing = await dbGetAsync<{ id: string }>(db, "SELECT id FROM benchmark_profiles WHERE platform = 'github' AND LOWER(username) = ?", [normalizedUsername]);
+      const existing = dbGet<{ id: string }>("SELECT id FROM benchmark_profiles WHERE platform = 'github' AND LOWER(username) = ?", [normalizedUsername]);
       
       if (existing && !refresh) {
         console.log(`    ${normalizedUsername} (already ingested, skipped)`);
@@ -126,27 +124,27 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
       };
 
       if (existing) {
-        await dbRunAsync(db, `UPDATE benchmark_profiles SET raw_data_json = ? WHERE id = ?`,
+        dbRun(`UPDATE benchmark_profiles SET raw_data_json = ? WHERE id = ?`,
           [JSON.stringify(profileData), profileId]);
         profilesUpdated++;
         console.log(`    ${normalizedUsername} (profile updated, followers: ${userData.followers})`);
       } else {
-        await dbRunAsync(db, `INSERT INTO benchmark_profiles (id, platform, username, url, is_elite, raw_data_json) VALUES (?, ?, ?, ?, ?, ?)`,
+        dbRun(`INSERT INTO benchmark_profiles (id, platform, username, url, is_elite, raw_data_json) VALUES (?, ?, ?, ?, ?, ?)`,
           [profileId, 'github', login, `https://github.com/${login}`, 0, JSON.stringify(profileData)]);
         profilesInserted++;
         console.log(`    ${normalizedUsername} (profile created, followers: ${userData.followers})`);
       }
 
       if (userData.bio) {
-        const existingBio = await dbGetAsync<{ id: string }>(db, "SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'bio'", [profileId]);
+        const existingBio = dbGet<{ id: string }>("SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'bio'", [profileId]);
         const wordCount = (userData.bio || '').split(/\s+/).length;
         
         if (existingBio) {
-          await dbRunAsync(db, `UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
+          dbRun(`UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
             [userData.bio, wordCount, JSON.stringify({ sectionName: 'bio' }), existingBio.id]);
           sectionsUpdated++;
         } else {
-          await dbRunAsync(db, `INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
+          dbRun(`INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
             [crypto.randomUUID(), profileId, 'bio', userData.bio, wordCount, JSON.stringify({ sectionName: 'bio' })]);
           sectionsInserted++;
         }
@@ -157,17 +155,17 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
       
       if (repos && repos.length > 0) {
         for (const repo of repos.slice(0, 3)) {
-          const existingRepo = await dbGetAsync<{ id: string }>(db, "SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'repo_desc' AND json_extract(metadata_json, '$.repoName') = ?", [profileId, repo.name]);
+          const existingRepo = dbGet<{ id: string }>("SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'repo_desc' AND json_extract(metadata_json, '$.repoName') = ?", [profileId, repo.name]);
           
           if (repo.description) {
             const wordCount = (repo.description || '').split(/\s+/).length;
             
             if (existingRepo) {
-              await dbRunAsync(db, `UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
+              dbRun(`UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
                 [`${repo.name}: ${repo.description}`, wordCount, JSON.stringify({ repoName: repo.name, stars: repo.stargazers_count, url: repo.html_url }), existingRepo.id]);
               sectionsUpdated++;
             } else {
-              await dbRunAsync(db, `INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
+              dbRun(`INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
                 [crypto.randomUUID(), profileId, 'repo_desc', `${repo.name}: ${repo.description}`, wordCount, JSON.stringify({ repoName: repo.name, stars: repo.stargazers_count, url: repo.html_url })]);
               sectionsInserted++;
             }
@@ -178,21 +176,22 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
       console.log(`    Fetching profile README...`);
       const readme = await getUserReadme(login, token);
       if (readme && readme.length > 50) {
-        const existingReadme = await dbGetAsync<{ id: string }>(db, "SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'profile_readme'", [profileId]);
+        const existingReadme = dbGet<{ id: string }>("SELECT id FROM benchmark_sections WHERE profile_id = ? AND section_type = 'profile_readme'", [profileId]);
         const wordCount = readme.split(/\s+/).length;
         
         if (existingReadme) {
-          await dbRunAsync(db, `UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
+          dbRun(`UPDATE benchmark_sections SET content = ?, word_count = ?, metadata_json = ? WHERE id = ?`,
             [readme, wordCount, JSON.stringify({ sectionName: 'profile_readme' }), existingReadme.id]);
           sectionsUpdated++;
         } else {
-          await dbRunAsync(db, `INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
+          dbRun(`INSERT INTO benchmark_sections (id, profile_id, section_type, content, word_count, metadata_json) VALUES (?, ?, ?, ?, ?, ?)`,
             [crypto.randomUUID(), profileId, 'profile_readme', readme, wordCount, JSON.stringify({ sectionName: 'profile_readme' })]);
           sectionsInserted++;
         }
         console.log(`    README: ${readme.length} chars`);
       }
 
+      saveDb();
       await new Promise(r => setTimeout(r, 500));
 
     } catch (error) {
@@ -200,8 +199,6 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
       errors++;
     }
   }
-
-  db.close();
 
   console.log(chalk.green('\nIngestion complete!'));
   console.log(`   Profiles inserted: ${profilesInserted}`);
@@ -215,10 +212,8 @@ async function doIngest(profilesToIngest: string[], refresh: boolean, token?: st
 
 export function rankerIngestCommands(): Command {
   const command = new Command('ingest')
-    .description('Ingest GitHub profile data (auto or manual)')
+    .description('Ingest GitHub profile data')
     .option('--platform <platform>', 'Platform to ingest from', 'github')
-    .option('--auto', 'Automatically seed and ingest profiles')
-    .option('--n-profiles <n>', 'Number of profiles to ingest (auto mode)', '25')
     .option('--usernames <csv>', 'Comma-separated usernames (manual override)')
     .option('--refresh', 'Force refresh cached data')
     .action(async (options) => {
@@ -226,8 +221,6 @@ export function rankerIngestCommands(): Command {
       console.log('================================\n');
 
       const platform = options.platform;
-      const autoMode = options.auto || false;
-      const nProfiles = parseInt(options.nProfiles) || 25;
       const usernames = options.usernames ? options.usernames.split(',').map((u: string) => normalizeUsername(u)).filter((u: string) => u.length > 0) : [];
       const refresh = options.refresh || false;
 
@@ -242,19 +235,17 @@ export function rankerIngestCommands(): Command {
       if (token) {
         console.log('GITHUB_TOKEN found - using authenticated requests');
       } else {
-        console.log(chalk.yellow('GITHUB_TOKEN not set - using unauthenticated requests (lower rate limits)'));
+        console.log(chalk.yellow('GITHUB_TOKEN not set - using unauthenticated requests'));
       }
+
+      await initDb();
 
       if (usernames.length > 0) {
         console.log(`Manual mode: ingesting ${usernames.length} specified users`);
         await doIngest(usernames, refresh, token);
-      } else if (autoMode) {
-        console.log('Auto mode requires seed data. Run ranker:seed first or provide --usernames.');
-        console.log('Example: pnpm cli ranker:ingest --platform github --usernames torvalds,facebook');
       } else {
-        console.log(chalk.yellow('No --auto or --usernames specified.'));
-        console.log('Example: pnpm cli ranker:ingest --platform github --usernames torvalds');
-        console.log('Example: pnpm cli ranker:ingest --platform github --auto --n-profiles 25');
+        console.log(chalk.yellow('No --usernames specified.'));
+        console.log('Example: ancso ranker:ingest --platform github --usernames torvalds,facebook');
       }
     });
 

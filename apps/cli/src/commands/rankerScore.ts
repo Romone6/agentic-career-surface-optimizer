@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs';
 import path from 'path';
-import { getDb, getDbPath, normalizeUsername, dbAllAsync } from '../db';
+import { initDb, getDb, getDbPath, normalizeUsername, dbAll, dbGet } from '../db';
 
 function getModelPath(): string {
   return path.join(process.cwd(), 'models', 'ranker.json');
@@ -11,19 +11,16 @@ function getModelPath(): string {
 async function getProfileSectionsByUsername(username: string): Promise<Array<{ id: string; section_type: string; content: string; word_count: number }>> {
   const db = getDb();
   const normalizedUsername = normalizeUsername(username);
-  return new Promise((resolve, reject) => {
-    db.all(`
-      SELECT s.id, s.section_type, s.content, s.word_count
-      FROM benchmark_sections s
-      JOIN benchmark_profiles p ON s.profile_id = p.id
-      WHERE p.platform = 'github' AND LOWER(p.username) = ?
-      ORDER BY s.section_type
-    `, [normalizedUsername], (err: Error | null, rows: any[]) => {
-      db.close();
-      if (err) reject(err);
-      else resolve(rows || []);
-    });
-  });
+  
+  const results = dbAll<any>(`
+    SELECT s.id, s.section_type, s.content, s.word_count
+    FROM benchmark_sections s
+    JOIN benchmark_profiles p ON s.profile_id = p.id
+    WHERE p.platform = 'github' AND LOWER(p.username) = ?
+    ORDER BY s.section_type
+  `, [normalizedUsername]);
+  
+  return results;
 }
 
 function concatenateProfileSections(sections: Array<{ section_type: string; content: string }>): string {
@@ -178,11 +175,11 @@ function computeSectionContributions(text: string, featureNames: string[], weigh
 export function rankerScoreCommands(): Command {
   const command = new Command('score')
     .description('Score a profile against the ranker model')
-    .option('--text <string>', 'Profile text to score')
-    .option('--file <path>', 'Path to file with profile text')
     .option('--platform <platform>', 'Platform (github)', 'github')
     .option('--username <name>', 'GitHub username to score (loads from DB)')
     .action(async (options) => {
+      await initDb();
+      
       let text = '';
       
       if (options.username && options.platform === 'github') {
@@ -199,12 +196,8 @@ export function rankerScoreCommands(): Command {
         
         text = concatenateProfileSections(sections);
         console.log(`Loaded ${sections.length} sections (${text.split(/\s+/).length} words)`);
-      } else if (options.text) {
-        text = options.text;
-      } else if (options.file && fs.existsSync(options.file)) {
-        text = fs.readFileSync(options.file, 'utf-8');
       } else {
-        console.log('Provide --text, --file, or --platform github --username <name>');
+        console.log('Provide --username <name>');
         return;
       }
       
@@ -266,7 +259,7 @@ export function rankerDumpCommands(): Command {
     .option('--username <name>', 'GitHub username to dump')
     .option('--out <path>', 'Output file path', '-')
     .action(async (options) => {
-      console.log(chalk.blue('\nDumping profile text for scoring...\n'));
+      await initDb();
       
       if (!options.username) {
         console.log('Provide --username <name>');

@@ -13,6 +13,8 @@ import { benchmarksCommands } from './commands/benchmarks';
 import { rankerCommands } from './commands/ranker';
 import { rankerExportCommand } from './commands/rankerExport';
 import { rankerAddPairCommand } from './commands/rankerAddPair';
+import { rankerIngestCommands } from './commands/rankerIngest';
+import { rankerScoreCommands, rankerDumpCommands } from './commands/rankerScore';
 
 export function setupCommands(program: Command): void {
   // Core commands
@@ -46,5 +48,8 @@ export function setupCommands(program: Command): void {
   const rankerCommand = rankerCommands();
   rankerCommand.addCommand(rankerExportCommand());
   rankerCommand.addCommand(rankerAddPairCommand());
+  rankerCommand.addCommand(rankerIngestCommands());
+  rankerCommand.addCommand(rankerScoreCommands());
+  rankerCommand.addCommand(rankerDumpCommands());
   program.addCommand(rankerCommand);
 }
